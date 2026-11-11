@@ -4,6 +4,8 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 from rank_bm25 import BM25Okapi
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 st.set_page_config(page_title="ResumeMatch | CS547",page_icon="💼",layout="wide")
 st.title("💼 ResumeMatch")
@@ -58,9 +60,10 @@ with st.sidebar:
     query=st.text_area("Or enter skills / experience")
     location=st.text_input("Location filter")
     count=st.slider("Number of results",5,20,10)
+    mode=st.selectbox("Ranking method",["Hybrid RRF (BM25 + TF-IDF)","BM25 only"])
     run=st.button("Find matching jobs",type="primary")
 st.metric("Indexed job postings",f"{len(jobs):,}")
-st.caption("BM25 baseline. Dense retrieval, MinHash and formal evaluation are planned; eligibility is heuristic.")
+st.caption("BM25 or BM25 + TF-IDF RRF baseline. Neural dense retrieval, MinHash and formal evaluation remain planned; eligibility is heuristic.")
 if not run: st.stop()
 query=extract_text(uploaded)+"\n"+query
 if not query.strip():
@@ -75,7 +78,19 @@ if candidates.empty:
 texts=(candidates.title.fillna("")+" "+candidates.description.fillna("").str.slice(0,2500)).tolist()
 bm25=BM25Okapi([tokenize(t) for t in texts])
 scores=bm25.get_scores(tokenize(query))
-ranked=candidates.assign(score=scores).sort_values("score",ascending=False).head(count)
+ranked=candidates.assign(score=scores)
+if mode.startswith("Hybrid"):
+    # Lightweight lexical vector baseline; NOT a dense neural embedding model.
+    matrix=TfidfVectorizer(stop_words="english",max_features=12000).fit_transform(texts+[query])
+    semantic=cosine_similarity(matrix[-1],matrix[:-1]).ravel()
+    bm_order=sorted(range(len(scores)),key=lambda i:(-scores[i],i))
+    vec_order=sorted(range(len(semantic)),key=lambda i:(-semantic[i],i))
+    bm_rank={idx:r+1 for r,idx in enumerate(bm_order)}
+    vec_rank={idx:r+1 for r,idx in enumerate(vec_order)}
+    fused=[1/(60+bm_rank[i])+1/(60+vec_rank[i]) for i in range(len(scores))]
+    ranked=ranked.assign(rrf_score=fused).sort_values("rrf_score",ascending=False).head(count)
+else:
+    ranked=ranked.sort_values("score",ascending=False).head(count)
 mine=skills(query)
 for _,job in ranked.iterrows():
     with st.container(border=True):
@@ -84,7 +99,7 @@ for _,job in ranked.iterrows():
         required=skills(job.description)
         st.write("**Matched skills:**",", ".join(sorted(mine&required)) or "None detected")
         st.write("**Missing skills:**",", ".join(sorted(required-mine)) or "None detected")
-        st.caption(f"BM25 score: {job.score:.2f}")
+        st.caption(f"BM25 score: {job.score:.2f}" + (f" · RRF: {job.rrf_score:.4f}" if "rrf_score" in ranked.columns else ""))
         for label,proof in eligibility(job.description):
             if proof: st.warning(f"{label}: {proof}")
         with st.expander("Job description"): st.write(str(job.description)[:4000])
