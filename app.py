@@ -39,15 +39,57 @@ def skills(text):
     s=str(text).lower()
     return {x for x in SKILLS if re.search(r"(?<![a-z0-9])"+re.escape(x)+r"(?![a-z0-9])",s)}
 
-def eligibility(text):
-    rules={
-        "Potential sponsorship restriction":r"(?i)(?:no|without|cannot provide|unable to provide)\s+(?:visa\s+)?sponsorship",
-        "Potential citizenship requirement":r"(?i)(?:u\.?s\.?|united states)\s+citizenship\s+required|must be (?:a )?(?:u\.?s\.?|united states) citizen",
-        "Potential clearance requirement":r"(?i)(?:active|current|requires?)\s+(?:secret|top secret|security)\s+clearance",
-    }
-    sentences=re.split(r"(?<=[.!?])\s+|\n+",str(text))
-    return [(name,next((s.strip()[:300] for s in sentences if re.search(pattern,s)),None)) for name,pattern in rules.items()]
+def evidence_sentences(text):
+    return [s.strip() for s in re.split(r"(?<=[.!?])\\s+|\\n+", str(text)) if s.strip()]
 
+def eligibility_checks(text):
+    checks = [
+        ("Visa sponsorship", [
+            ("Potential restriction", r"\\b(?:no|not offering|does not offer|unable to provide|cannot provide|without)\\s+(?:visa\\s+)?sponsorship\\b|\\b(?:sponsorship|visa sponsorship)\\s+(?:is\\s+)?(?:not available|unavailable)\\b"),
+            ("Sponsorship mentioned", r"\\b(?:visa sponsorship|sponsor(?:ship)?\\s+(?:available|provided)|will sponsor)\\b"),
+        ]),
+        ("Citizenship", [("Requirement found", r"\\b(?:must be|requires?|required to be)\\s+(?:a\\s+)?(?:u\\.?s\\.?|united states)\\s+citizen\\b|\\b(?:u\\.?s\\.?|united states)\\s+citizenship\\s+(?:is\\s+)?required\\b")]),
+        ("Security clearance", [("Requirement found", r"\\b(?:must (?:have|hold|obtain)|requires?|required|active|current)\\b[^.!?\\n]{0,65}\\b(?:security clearance|secret clearance|top secret clearance)\\b")]),
+        ("Experience", [("Requirement found", r"\\b(?:at least|minimum of|minimum|\\d+\\s*[-–]\\s*\\d+|\\d+\\+?)\\s*\\d*\\s*(?:years|yrs)\\s+(?:of\\s+)?(?:relevant\\s+|professional\\s+|work\\s+)?experience\\b|\\b\\d+\\+?\\s*(?:years|yrs)\\s+(?:of\\s+)?(?:relevant\\s+|professional\\s+|work\\s+)?experience\\b")]),
+    ]
+    sentences=evidence_sentences(text)
+    output=[]
+    for name, patterns in checks:
+        status, proof = "Not specified", None
+        for candidate_status, pattern in patterns:
+            proof=next((line[:320] for line in sentences if re.search(pattern,line,re.I)),None)
+            if proof:
+                status=candidate_status
+                break
+        output.append((name,status,proof))
+    return output
+
+SKILL_GUIDES={
+    "python":"Practice Python scripting, APIs, and a small portfolio project.",
+    "sql":"Practice SQL joins, aggregation, and query optimization.",
+    "aws":"Deploy a small application using AWS services.",
+    "docker":"Containerize a Python or web application with Docker.",
+    "kubernetes":"Learn deployments, services, and container orchestration basics.",
+    "react":"Build a React interface that consumes a REST API.",
+    "java":"Build and test a Java backend application.",
+    "machine learning":"Train and evaluate a model on a public dataset.",
+    "pytorch":"Implement and train a small neural network in PyTorch.",
+    "tensorflow":"Build a simple model with TensorFlow.",
+    "azure":"Deploy a small application on Azure.",
+    "git":"Practice branching, pull requests, and resolving merge conflicts.",
+    "linux":"Practice command-line tools, permissions, and shell scripts.",
+    "mongodb":"Build a CRUD API using MongoDB.",
+    "javascript":"Practice modern JavaScript and asynchronous APIs.",
+    "excel":"Practice pivot tables, formulas, and data cleaning.",
+    "tableau":"Create an interactive dashboard using a sample dataset.",
+}
+
+def skill_advice(resume_text, job_text):
+    candidate=skills(resume_text)
+    mentioned=skills(job_text)
+    matched=sorted(candidate & mentioned)
+    missing=sorted(mentioned - candidate)
+    return matched, missing
 
 @st.cache_resource(show_spinner="Building search index (first run only)...")
 def build_index(data_path, modified_time):
@@ -104,17 +146,28 @@ if mode.startswith("Hybrid"):
     ranked=ranked.assign(rrf_score=fused).sort_values("rrf_score",ascending=False).head(count)
 else:
     ranked=ranked.sort_values("score",ascending=False).head(count)
-mine=skills(query)
 for _,job in ranked.iterrows():
     with st.container(border=True):
         st.subheader(str(job.title))
         st.caption(f"{job.get('company_name','Unknown')} · {job.get('location','Unknown')}")
-        required=skills(job.description)
-        st.write("**Matched skills:**",", ".join(sorted(mine&required)) or "None detected")
-        st.write("**Missing skills:**",", ".join(sorted(required-mine)) or "None detected")
+        matched,missing=skill_advice(query,job.description)
+        st.markdown("**Skill-gap advisor**")
+        st.write("**Matched skills:**", ", ".join(matched) or "None detected")
+        st.write("**Skills not found in your input:**", ", ".join(missing) or "None detected")
+        if matched or missing:
+            st.progress(len(matched)/max(1,len(matched)+len(missing)),text=f"Keyword coverage: {len(matched)}/{len(matched)+len(missing)} skills mentioned in this posting")
+        if missing:
+            with st.expander("Suggested learning priorities",expanded=True):
+                for skill in missing[:5]:
+                    st.write(f"**{skill.title()}** — {SKILL_GUIDES.get(skill,'Find an introductory tutorial and build a small project using this skill.')}")
+        st.caption("Keyword-based suggestions only: skills mentioned in a posting are not necessarily mandatory. Missing means not found in the supplied resume/query.")
         st.caption(f"BM25 score: {job.score:.2f}" + (f" · RRF: {job.rrf_score:.4f}" if "rrf_score" in ranked.columns else ""))
-        for label,proof in eligibility(job.description):
-            if proof: st.warning(f"{label}: {proof}")
+        with st.expander("Eligibility and requirements",expanded=True):
+            for label,status,proof in eligibility_checks(job.description):
+                st.write(f"**{label}: {status}**")
+                if proof:
+                    st.caption(f"Evidence from posting: {proof}")
+            st.caption("This is automated text detection, not a determination of eligibility. 'Not specified' does not mean eligible; confirm with the employer.")
         with st.expander("Job description"): st.write(str(job.description)[:4000])
         url=job.get("job_posting_url")
         if isinstance(url,str) and url.startswith(("https://","http://")):
