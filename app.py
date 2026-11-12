@@ -8,8 +8,16 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 import numpy as np
 
 st.set_page_config(page_title="ResumeMatch | CS547",page_icon="💼",layout="wide")
-st.title("💼 ResumeMatch")
-st.caption("CS547 Information Retrieval · Work-in-progress deployment")
+st.markdown("""<style>
+.block-container{max-width:1180px;padding-top:1.7rem;padding-bottom:3rem}
+.hero{background:linear-gradient(120deg,#142a4b,#254b76);color:#fff;border-radius:18px;padding:28px 32px;margin-bottom:20px}
+.hero h1{font-size:2.35rem;margin:0;color:white}
+.hero p{color:#dbeafe;margin:8px 0 0;font-size:1rem}
+.section-heading{font-size:1.25rem;font-weight:700;margin:1.4rem 0 .7rem}
+[data-testid="stVerticalBlockBorderWrapper"]{border-radius:14px}
+[data-testid="stMetric"]{padding:12px;border-radius:12px;background:rgba(130,150,170,.08)}
+</style>""",unsafe_allow_html=True)
+st.markdown('<div class="hero"><h1>💼 ResumeMatch</h1><p>Find relevant roles. Understand requirements. Build your next skills.</p></div>',unsafe_allow_html=True)
 DATA=Path(__file__).parent/"data"/"postings.csv"
 
 @st.cache_data
@@ -109,15 +117,20 @@ if jobs.empty:
     st.stop()
 
 with st.sidebar:
-    st.header("Search")
-    uploaded=st.file_uploader("Upload resume",type=["pdf","docx","txt"])
-    query=st.text_area("Or enter skills / experience")
-    location=st.text_input("Location filter")
+    st.header("🔎 Search settings")
+    uploaded=st.file_uploader("Upload your resume (optional)",type=["pdf","docx","txt"])
+    query=st.text_area("Skills, experience or job title",placeholder="e.g. Python SQL developer with React experience",height=110)
+    location=st.text_input("Location (optional)",placeholder="e.g. Boston")
     count=st.slider("Number of results",5,20,10)
     mode=st.selectbox("Ranking method",["Hybrid RRF (BM25 + TF-IDF)","BM25 only"])
-    run=st.button("Find matching jobs",type="primary")
-st.metric("Indexed job postings",f"{len(jobs):,}")
-st.caption("BM25 or BM25 + TF-IDF RRF baseline. Neural dense retrieval, MinHash and formal evaluation remain planned; eligibility is heuristic.")
+    run=st.button("✨ Find matching jobs",type="primary",use_container_width=True)
+m1,m2,m3=st.columns(3)
+m1.metric("Job postings",f"{len(jobs):,}")
+m2.metric("Ranking methods","2")
+m3.metric("Analysis tools","2")
+st.caption("CS547 Information Retrieval · BM25 + TF-IDF RRF baseline · Rule-based eligibility and skill guidance")
+if not run:
+    st.info("Enter your skills or upload a resume in the sidebar, then choose **Find matching jobs**.",icon="💡")
 if not run: st.stop()
 query=extract_text(uploaded)+"\n"+query
 if not query.strip():
@@ -146,29 +159,31 @@ if mode.startswith("Hybrid"):
     ranked=ranked.assign(rrf_score=fused).sort_values("rrf_score",ascending=False).head(count)
 else:
     ranked=ranked.sort_values("score",ascending=False).head(count)
-for _,job in ranked.iterrows():
+st.markdown(f'<div class="section-heading">🎯 Top {len(ranked)} matching jobs</div>',unsafe_allow_html=True)
+st.caption("Rankings indicate text relevance, not hiring likelihood. Expand each job to review its details.")
+for rank,(_,job) in enumerate(ranked.iterrows(),start=1):
     with st.container(border=True):
-        st.subheader(str(job.title))
+        st.markdown(f"#### {rank}. {job.title}")
         st.caption(f"{job.get('company_name','Unknown')} · {job.get('location','Unknown')}")
         matched,missing=skill_advice(query,job.description)
-        st.markdown("**Skill-gap advisor**")
+        st.markdown("**🧩 Skill-gap advisor**")
         st.write("**Matched skills:**", ", ".join(matched) or "None detected")
         st.write("**Skills not found in your input:**", ", ".join(missing) or "None detected")
         if matched or missing:
             st.progress(len(matched)/max(1,len(matched)+len(missing)),text=f"Keyword coverage: {len(matched)}/{len(matched)+len(missing)} skills mentioned in this posting")
         if missing:
-            with st.expander("Suggested learning priorities",expanded=True):
+            with st.expander("📚 Suggested learning priorities",expanded=False):
                 for skill in missing[:5]:
                     st.write(f"**{skill.title()}** — {SKILL_GUIDES.get(skill,'Find an introductory tutorial and build a small project using this skill.')}")
         st.caption("Keyword-based suggestions only: skills mentioned in a posting are not necessarily mandatory. Missing means not found in the supplied resume/query.")
         st.caption(f"BM25 score: {job.score:.2f}" + (f" · RRF: {job.rrf_score:.4f}" if "rrf_score" in ranked.columns else ""))
-        with st.expander("Eligibility and requirements",expanded=True):
+        with st.expander("🛡️ Eligibility and requirements",expanded=False):
             for label,status,proof in eligibility_checks(job.description):
                 st.write(f"**{label}: {status}**")
                 if proof:
                     st.caption(f"Evidence from posting: {proof}")
             st.caption("This is automated text detection, not a determination of eligibility. 'Not specified' does not mean eligible; confirm with the employer.")
-        with st.expander("Job description"): st.write(str(job.description)[:4000])
+        with st.expander("📄 Full job description"): st.write(str(job.description)[:4000])
         url=job.get("job_posting_url")
         if isinstance(url,str) and url.startswith(("https://","http://")):
-            st.link_button("View job",url)
+            st.link_button("↗ View original posting",url)
