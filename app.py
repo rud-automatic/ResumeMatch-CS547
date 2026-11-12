@@ -5,7 +5,7 @@ import pandas as pd
 import streamlit as st
 from rank_bm25 import BM25Okapi
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
 
 st.set_page_config(page_title="ResumeMatch | CS547",page_icon="💼",layout="wide")
 st.title("💼 ResumeMatch")
@@ -48,6 +48,18 @@ def eligibility(text):
     sentences=re.split(r"(?<=[.!?])\s+|\n+",str(text))
     return [(name,next((s.strip()[:300] for s in sentences if re.search(pattern,s)),None)) for name,pattern in rules.items()]
 
+
+@st.cache_resource(show_spinner="Building search index (first run only)...")
+def build_index(data_path, modified_time):
+    frame=pd.read_csv(data_path,usecols=lambda x:x in ["job_id","title","company_name","description","location","job_posting_url"],nrows=20000)
+    frame=frame.dropna(subset=["title","description"]).drop_duplicates("job_id").reset_index(drop=True)
+    texts=(frame.title.fillna("")+" "+frame.description.fillna("").str.slice(0,1200)).tolist()
+    tokens=[tokenize(t) for t in texts]
+    bm25=BM25Okapi(tokens)
+    vectorizer=TfidfVectorizer(stop_words="english",max_features=8000,dtype=np.float32)
+    matrix=vectorizer.fit_transform(texts)
+    return frame,bm25,vectorizer,matrix
+
 jobs=load_jobs()
 if jobs.empty:
     st.warning("The real LinkedIn dataset has not been published to this repository yet. This is a code-preview deployment, not the completed project.")
@@ -75,16 +87,17 @@ if location:
 if candidates.empty:
     st.info("No jobs matched your location filter.")
     st.stop()
-texts=(candidates.title.fillna("")+" "+candidates.description.fillna("").str.slice(0,2500)).tolist()
-bm25=BM25Okapi([tokenize(t) for t in texts])
-scores=bm25.get_scores(tokenize(query))
-ranked=candidates.assign(score=scores)
+with st.spinner("Finding matching jobs..."):
+    indexed,bm25,vectorizer,matrix=build_index(str(DATA),DATA.stat().st_mtime_ns)
+    selected=indexed.index[indexed.index.isin(candidates.index)].to_numpy()
+    scores_all=bm25.get_scores(tokenize(query))
+    scores=scores_all[selected]
+    ranked=indexed.iloc[selected].copy().assign(score=scores)
 if mode.startswith("Hybrid"):
     # Lightweight lexical vector baseline; NOT a dense neural embedding model.
-    matrix=TfidfVectorizer(stop_words="english",max_features=12000).fit_transform(texts+[query])
-    semantic=cosine_similarity(matrix[-1],matrix[:-1]).ravel()
-    bm_order=sorted(range(len(scores)),key=lambda i:(-scores[i],i))
-    vec_order=sorted(range(len(semantic)),key=lambda i:(-semantic[i],i))
+    semantic=np.asarray((matrix[selected] @ vectorizer.transform([query]).T).toarray()).ravel()
+    bm_order=np.argsort(-scores,kind="stable")
+    vec_order=np.argsort(-semantic,kind="stable")
     bm_rank={idx:r+1 for r,idx in enumerate(bm_order)}
     vec_rank={idx:r+1 for r,idx in enumerate(vec_order)}
     fused=[1/(60+bm_rank[i])+1/(60+vec_rank[i]) for i in range(len(scores))]
