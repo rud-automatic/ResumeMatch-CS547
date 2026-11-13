@@ -48,17 +48,17 @@ def skills(text):
     return {x for x in SKILLS if re.search(r"(?<![a-z0-9])"+re.escape(x)+r"(?![a-z0-9])",s)}
 
 def evidence_sentences(text):
-    return [s.strip() for s in re.split(r"(?<=[.!?])\\s+|\\n+", str(text)) if s.strip()]
+    return [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", str(text)) if s.strip()]
 
 def eligibility_checks(text):
     checks = [
         ("Visa sponsorship", [
-            ("Potential restriction", r"\\b(?:no|not offering|does not offer|unable to provide|cannot provide|without)\\s+(?:visa\\s+)?sponsorship\\b|\\b(?:sponsorship|visa sponsorship)\\s+(?:is\\s+)?(?:not available|unavailable)\\b"),
-            ("Sponsorship mentioned", r"\\b(?:visa sponsorship|sponsor(?:ship)?\\s+(?:available|provided)|will sponsor)\\b"),
+            ("Potential restriction", r"\b(?:no|not offering|does not offer|unable to provide|cannot provide|without)\s+(?:visa\s+)?sponsorship\b|\b(?:sponsorship|visa sponsorship)\s+(?:is\s+)?(?:not available|unavailable)\b"),
+            ("Sponsorship mentioned", r"\b(?:visa sponsorship|sponsor(?:ship)?\s+(?:available|provided)|will sponsor)\b"),
         ]),
-        ("Citizenship", [("Requirement found", r"\\b(?:must be|requires?|required to be)\\s+(?:a\\s+)?(?:u\\.?s\\.?|united states)\\s+citizen\\b|\\b(?:u\\.?s\\.?|united states)\\s+citizenship\\s+(?:is\\s+)?required\\b")]),
-        ("Security clearance", [("Requirement found", r"\\b(?:must (?:have|hold|obtain)|requires?|required|active|current)\\b[^.!?\\n]{0,65}\\b(?:security clearance|secret clearance|top secret clearance)\\b")]),
-        ("Experience", [("Requirement found", r"\\b(?:at least|minimum of|minimum|\\d+\\s*[-–]\\s*\\d+|\\d+\\+?)\\s*\\d*\\s*(?:years|yrs)\\s+(?:of\\s+)?(?:relevant\\s+|professional\\s+|work\\s+)?experience\\b|\\b\\d+\\+?\\s*(?:years|yrs)\\s+(?:of\\s+)?(?:relevant\\s+|professional\\s+|work\\s+)?experience\\b")]),
+        ("Citizenship", [("Requirement found", r"\b(?:must be|requires?|required to be)\s+(?:a\s+)?(?:u\.?s\.?|united states)\s+citizen\b|\b(?:u\.?s\.?|united states)\s+citizenship\s+(?:is\s+)?required\b")]),
+        ("Security clearance", [("Requirement found", r"\b(?:must (?:have|hold|obtain)|requires?|required|active|current)\b[^.!?\n]{0,65}\b(?:security clearance|secret clearance|top secret clearance)\b")]),
+        ("Experience", [("Requirement found", r"\b(?:at least|minimum of|minimum|\d+\s*[-–]\s*\d+|\d+\+?)\s*\d*\s*(?:years|yrs)\s+(?:of\s+)?(?:relevant\s+|professional\s+|work\s+)?experience\b|\b\d+\+?\s*(?:years|yrs)\s+(?:of\s+)?(?:relevant\s+|professional\s+|work\s+)?experience\b")]),
     ]
     sentences=evidence_sentences(text)
     output=[]
@@ -131,7 +131,11 @@ m3.metric("Analysis tools","2")
 st.caption("CS547 Information Retrieval · BM25 + TF-IDF RRF baseline · Rule-based eligibility and skill guidance")
 if not run:
     st.info("Enter your skills or upload a resume in the sidebar, then choose **Find matching jobs**.",icon="💡")
-if not run: st.stop()
+if not run:
+    st.subheader("Your next opportunity starts here")
+    st.write("Use the sidebar to upload your resume or enter skills such as **Python, SQL, Java, React**. Then select **Find matching jobs**.")
+    st.info("Tip: A resume provides more context than a short keyword query. Results are drawn from the indexed historical job-posting dataset.")
+    st.stop()
 query=extract_text(uploaded)+"\n"+query
 if not query.strip():
     st.error("Please upload a resume or enter a query.")
